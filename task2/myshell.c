@@ -18,56 +18,120 @@ typedef struct process{
 } process;
 
 int debugFlag = 0;
-process** myShellPL;
 
 int isQuit (cmdLine* cmdLine);
 int isCd (cmdLine* cmdLine);
 int isProcs (cmdLine* cmdLine);
 void changeDir(char* path);
-void execute(cmdLine* pCmdLine, process** processList);
+process* execute(cmdLine* pCmdLine, process** processList);
+cmdLine* copyCmdLine (cmdLine* oldCmdLine);
+void freeProcessList(process *process_list);
+void updateProcessList(process *process_list);
+void updateProcessStatus(process *process_list, int pid, int status);
 
-void addProcess(process** process_list, cmdLine* cmd, pid_t pid){
+process* addProcess(process** process_list, cmdLine* cmd, pid_t pid){
     process* newProcess = (struct process*)malloc(sizeof(struct process));
     newProcess->cmd = cmd;
     newProcess->pid = pid;
     newProcess->status = RUNNING; // init for 1?
-    if (process_list == NULL) {
+    if (*process_list == NULL) { // first
         newProcess->next = NULL;
-        myShellPL = &newProcess;
     }
     else {
-        newProcess->next = *process_list;
-        *myShellPL = newProcess;
+        newProcess->next = *(process_list);
     }
-    
+    return newProcess;
 }
 
-void printProcessList(process** process_list) {
-    process* currProc = *process_list;
-    printf("PID\t Command\t STATUS\n");
-    while (currProc != NULL && currProc->cmd-> /* SIG ERROR */) {
-        printf("%d\t %s\t %d\n", currProc->pid, currProc->cmd->arguments[0], currProc->status);
+
+process* printProcessList(process** process_list) {
+    process* head = *process_list;
+    char* status = "";
+    updateProcessList(*process_list);
+    printf("PID\tCommand\tSTATUS\n");
+    if (process_list != NULL) {
+        process* currProc = head;
+        process *prevProc = NULL;
+        while (currProc != NULL) {
+            switch(currProc->status) {
+                case 1 : status = "RUNNING";
+                case 0 : status = "SUSPENDED";
+                case -1 : status = "TERMINATED";
+            }
+            printf("%d\t%s\t%s\n", currProc->pid, currProc->cmd->arguments[0], status);
+            if (currProc->status == TERMINATED){
+                if (currProc == head) head = currProc->next;
+                else prevProc->next = currProc->next;
+            }
+            else {
+                if (currProc == head) prevProc = head;
+                else prevProc = currProc;
+            }   
+            currProc = currProc->next;
+        }
+    }
+    return head;
+}
+
+void freeProcessList(process *process_list){
+    process *curr = process_list;
+    process *prev = process_list;
+    if (process_list != NULL) {
+        while (curr != NULL) {
+            freeCmdLines(curr->cmd);
+            curr = curr->next;
+            free(prev);
+            prev = curr;
+        }
+    }
+}
+
+void updateProcessList(process *process_list){
+    process* currProc = process_list;
+    int status;
+    while (currProc != NULL) {
+        if (waitpid(currProc->pid, &status, WNOHANG) != 0)
+            currProc->status = TERMINATED;
         currProc = currProc->next;
     }
 }
 
-void execCommand(cmdLine* cmdLine, process** processList) {
-    if (isCd(cmdLine)) changeDir(cmdLine->arguments[1]);
-    else if (isProcs(cmdLine)) printProcessList(processList);
-
-    else execute(cmdLine, processList);
+void updateProcessStatus(process *process_list, int pid, int status){
+    process* currProc = process_list;
+    while (currProc != NULL) {
+        if (currProc->pid == pid)
+            currProc->status = status;
+            break;
+        currProc = currProc->next;
+    }
 }
 
-void execute(cmdLine* pCmdLine, process** processList) {
+
+process* execCommand(cmdLine* cmdLine, process** processList) {
+    if (isCd(cmdLine)) {
+        changeDir(cmdLine->arguments[1]);
+        freeCmdLines(cmdLine);
+        return *processList;
+    }
+    else if (isProcs(cmdLine)) {
+        freeCmdLines(cmdLine);
+        return printProcessList(processList);
+    }
+    else return execute(cmdLine, processList);
+}
+
+process* execute(cmdLine* pCmdLine, process** processList) {
     int pid, status;
+    process* temp;
     if (!(pid=fork())) {
         if (debugFlag) fprintf(stderr, "PID: %d, Executing command: %s\n", pid, pCmdLine->arguments[0]);
         execvp(pCmdLine->arguments[0], pCmdLine->arguments);
         perror("");
         exit(1);
     }
-    addProcess(processList, pCmdLine, pid);
+    temp = addProcess(processList, pCmdLine, pid);
     if (pCmdLine->blocking == 1) waitpid(pid, &status, 0);
+    return temp;
 }
 
 int isQuit (cmdLine* cmdLine) {
@@ -91,6 +155,7 @@ int main(int argc, char **argv) {
     char userBuff[2048];
     cmdLine* currentLine;
     int quitFlag = 0;
+    process* myShellPL;
 
     if (argc > 1) debugFlag = !(strcmp(argv[1], "-d"));
 
@@ -100,8 +165,8 @@ int main(int argc, char **argv) {
         fgets(userBuff, 2048, stdin);
         currentLine = parseCmdLines(userBuff);
         quitFlag = isQuit(currentLine);
-        if (!quitFlag) execCommand(currentLine, myShellPL);
-        freeCmdLines(currentLine);
+        if (!quitFlag) myShellPL = execCommand(currentLine, &myShellPL);
     }
+    freeProcessList(myShellPL);
     return 0;
 }
