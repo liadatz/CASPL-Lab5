@@ -11,9 +11,9 @@
 #define SUSPENDED 0
 
 typedef struct process{
-    cmdLine* cmd;                         /* the parsed command line*/
-    pid_t pid; 		                  /* the process id that is running the command*/
-    int status;                           /* status of the process: RUNNING/SUSPENDED/TERMINATED */
+    cmdLine* cmd;                             /* the parsed command line*/
+    pid_t pid; 		                          /* the process id that is running the command*/
+    int status;                               /* status of the process: RUNNING/SUSPENDED/TERMINATED */
     struct process *next;	                  /* next process in chain */
 } process;
 
@@ -33,7 +33,7 @@ process* addProcess(process** process_list, cmdLine* cmd, pid_t pid){
     process* newProcess = (struct process*)malloc(sizeof(struct process));
     newProcess->cmd = cmd;
     newProcess->pid = pid;
-    newProcess->status = RUNNING; // init for 1?
+    newProcess->status = RUNNING;
     if (*process_list == NULL) { // first
         newProcess->next = NULL;
     }
@@ -48,26 +48,36 @@ process* printProcessList(process** process_list) {
     process* head = *process_list;
     char* status = "";
     updateProcessList(*process_list);
-    printf("PID\tCommand\tSTATUS\n");
+    printf("PID\t Command\t STATUS\n");
     if (process_list != NULL) {
         process* currProc = head;
         process *prevProc = NULL;
         while (currProc != NULL) {
             switch(currProc->status) {
-                case 1 : status = "RUNNING";
-                case 0 : status = "SUSPENDED";
-                case -1 : status = "TERMINATED";
+                case (1) : status = "RUNNING"; break;
+                case (0) : status = "SUSPENDED"; break;
+                case (-1) : status = "TERMINATED"; break;
             }
-            printf("%d\t%s\t%s\n", currProc->pid, currProc->cmd->arguments[0], status);
-            if (currProc->status == TERMINATED){
-                if (currProc == head) head = currProc->next;
-                else prevProc->next = currProc->next;
+            printf("%d\t %s\t %s\n", currProc->pid, currProc->cmd->arguments[0], status);
+            /* Delete "freshly" terminated processes */
+            if (currProc->status == TERMINATED) {
+                if (prevProc == NULL) {
+                    head = currProc->next;
+                    freeCmdLines(currProc->cmd);
+                    free(currProc);
+                    currProc = head;
+                }
+                else {
+                    prevProc->next = currProc->next;
+                    freeCmdLines(currProc->cmd);
+                    free(currProc);
+                    currProc = prevProc->next;
+                }
             }
             else {
-                if (currProc == head) prevProc = head;
-                else prevProc = currProc;
-            }   
-            currProc = currProc->next;
+                prevProc = currProc;
+                currProc = currProc->next;
+            }
         }
     }
     return head;
@@ -89,9 +99,26 @@ void freeProcessList(process *process_list){
 void updateProcessList(process *process_list){
     process* currProc = process_list;
     int status;
+    pid_t w;
     while (currProc != NULL) {
-        if (waitpid(currProc->pid, &status, WNOHANG) != 0)
-            currProc->status = TERMINATED;
+        w = waitpid(currProc->pid, &status, WNOHANG | WCONTINUED | WUNTRACED);
+        if (w >= 0) {
+            if (WIFCONTINUED(status)) {
+                currProc->status = RUNNING;
+                printf("1\n");
+            }
+            else if (WIFSTOPPED(status)) {
+                currProc->status = SUSPENDED;
+                printf("2\n");
+            }
+            else if (WIFSIGNALED(status)) {
+                currProc->status = TERMINATED;
+                printf("3\n");
+            }
+        }
+        else {
+            perror("Error in waitpid call");
+        }
         currProc = currProc->next;
     }
 }
@@ -105,7 +132,6 @@ void updateProcessStatus(process *process_list, int pid, int status){
         currProc = currProc->next;
     }
 }
-
 
 process* execCommand(cmdLine* cmdLine, process** processList) {
     if (isCd(cmdLine)) {
@@ -122,14 +148,43 @@ process* execCommand(cmdLine* cmdLine, process** processList) {
 
 process* execute(cmdLine* pCmdLine, process** processList) {
     int pid, status;
-    process* temp;
+    process* temp = *processList;
     if (!(pid=fork())) {
         if (debugFlag) fprintf(stderr, "PID: %d, Executing command: %s\n", pid, pCmdLine->arguments[0]);
-        execvp(pCmdLine->arguments[0], pCmdLine->arguments);
-        perror("");
-        exit(1);
+
+        if (strcmp(pCmdLine->arguments[0], "suspend") == 0) {
+            pid = atoi(pCmdLine->arguments[1]);
+            freeCmdLines(pCmdLine);
+            if (kill(pid, SIGTSTP) < 0)
+                perror("Failed to suspend");
+            else 
+                updateProcessStatus(temp, pid, SUSPENDED);
+            sleep(atoi(pCmdLine->arguments[2]));
+            if (kill(pid, SIGCONT) < 0)
+                perror("Failed to continue");
+            else 
+                updateProcessStatus(temp, pid, RUNNING);
+        }
+
+        else if (strcmp(pCmdLine->arguments[0], "kill") == 0) {
+            pid = atoi(pCmdLine->arguments[1]);
+            freeCmdLines(pCmdLine);
+            if (kill(pid, SIGINT) < 0)
+                perror("Failed to kill");
+            else
+                updateProcessStatus(temp, pid, TERMINATED);
+        } 
+        else {
+            execvp(pCmdLine->arguments[0], pCmdLine->arguments);
+            perror("");
+            _exit(1);
+        }
     }
-    temp = addProcess(processList, pCmdLine, pid);
+    
+    if (!(strcmp(pCmdLine->arguments[0], "suspend") == 0 || strcmp(pCmdLine->arguments[0], "kill") == 0)){
+        temp = addProcess(processList, pCmdLine, pid);
+    }
+    
     if (pCmdLine->blocking == 1) waitpid(pid, &status, 0);
     return temp;
 }
@@ -151,7 +206,7 @@ void changeDir(char* path) {
 }
 
 int main(int argc, char **argv) {
-    char dirBuff[PATH_MAX];
+    // char dirBuff[PATH_MAX];
     char userBuff[2048];
     cmdLine* currentLine;
     int quitFlag = 0;
@@ -160,8 +215,8 @@ int main(int argc, char **argv) {
     if (argc > 1) debugFlag = !(strcmp(argv[1], "-d"));
 
     while (!quitFlag) {
-        getcwd(dirBuff, PATH_MAX);
-        printf("%s ", dirBuff);
+        // getcwd(dirBuff, PATH_MAX);
+        // printf("%s ", dirBuff);
         fgets(userBuff, 2048, stdin);
         currentLine = parseCmdLines(userBuff);
         quitFlag = isQuit(currentLine);

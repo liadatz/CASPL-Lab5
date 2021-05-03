@@ -4,24 +4,28 @@
 #include <stdlib.h>
 #include <string.h>
 
-void handler(char* sig) {
-	printf("Caught signal %s\n", sig);
+void handler(int sig);
+void handler2(int sig);
+
+void handler(int sig) {
+	printf("Caught signal %s\n", strsignal(sig));
 	signal(sig, SIG_DFL);
-	handler2(sig);
+	if (sig == SIGTSTP) signal(SIGCONT, handler);
+	else if (sig == SIGCONT) signal(SIGTSTP, handler);
 	raise(sig);
 }
 
-void handler2(char* sig) {
-	if (!(strcmp(sig, strsignal(19)))) signal(strsignal(18), handler); /* if sig is SIGCONT */
-	else if (!(strcmp(sig, strsignal(18)))) signal(strsignal(19), handler); /* if sig is SIGSTP */
-}
+// void handler2(int sig) {
+// 	if (sig == SIGTSTP) signal(SIGCONT, handler); /* if sig is SIGSTP */
+// 	else if (sig == SIGCONT) signal(SIGTSTP, handler); /* if sig is SIGCONT */
+// }
 
 int main(int argc, char **argv){ 
 	printf("Starting the program\n");
-	signal(strsignal(2), handler); /* SIGINT */
-	signal(strsignal(18), handler); /* SIGSTP */
-	signal(strsignal(19), handler); /* SIGCONT */
-
+	signal(SIGTSTP, handler); /* SIGSTP */
+	signal(SIGINT, handler); /* SIGINT */
+	signal(SIGCONT, handler); /* SIGCONT */
+	
 	while(1) {
 		sleep(2);
 	}
