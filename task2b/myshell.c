@@ -128,47 +128,50 @@ void updateProcessStatus(process* process_list, int pid, int status){
 void execute(cmdLine* pCmdLine) {
     int status = 0;
     int pid = fork();
-    if (pid == 0) {
-        if (debugFlag) fprintf(stderr, "PID: %d, Executing command: %s\n", pid, pCmdLine->arguments[0]);
-        if (strcmp(pCmdLine->arguments[0], "suspend") == 0) {
-            pid = atoi(pCmdLine->arguments[1]);
-            freeCmdLines(pCmdLine);
+    if (debugFlag) fprintf(stderr, "PID: %d, Executing command: %s\n", pid, pCmdLine->arguments[0]);
+    if (strcmp(pCmdLine->arguments[0], "suspend") == 0) {
+        if (pid == 0) {
+            pid = atoi(pCmdLine->arguments[1]); 
             if (kill(pid, SIGTSTP) < 0)
                 perror("Failed to suspend");
-            else 
-                updateProcessStatus(*myShellPL, pid, SUSPENDED);
+            // else 
+            //     updateProcessStatus(*myShellPL, pid, SUSPENDED);
             sleep(atoi(pCmdLine->arguments[2]));
             if (kill(pid, SIGCONT) < 0)
                 perror("Failed to continue");
-            else 
-                updateProcessStatus(*myShellPL, pid, RUNNING);
+            freeCmdLines(pCmdLine);
+            _exit(0);
         }
-
-        else if (strcmp(pCmdLine->arguments[0], "kill") == 0) {
+        else {
+            waitpid(pid, &status, WNOHANG);
+        }
+    }
+    else if (strcmp(pCmdLine->arguments[0], "kill") == 0) {
+        if (pid == 0) {
             pid = atoi(pCmdLine->arguments[1]);
             freeCmdLines(pCmdLine);
             if (kill(pid, SIGINT) < 0)
                 perror("Failed to kill");
-            else
-                updateProcessStatus(*myShellPL, pid, TERMINATED);
+            // else
+            //     updateProcessStatus(*myShellPL, pid, TERMINATED);
+            _exit(0);
         }
-
         else {
+            waitpid(pid, &status, WNOHANG);
+        }
+    }
+    else {
+        if (pid == 0) {
             execvp(pCmdLine->arguments[0], pCmdLine->arguments);
             perror("");
             _exit(1);
-        } 
-    }
-    else if (pid == -1) {
-        perror("Failed Forking: ");
-        return;
-    }
-    else {
-        if (!(strcmp(pCmdLine->arguments[0], "suspend") == 0 || strcmp(pCmdLine->arguments[0], "kill") == 0))
+        }
+        else {
             addProcess(myShellPL, pCmdLine, pid);
-        if (pCmdLine->blocking) {
-            waitpid(pid, &status, 0);
-            updateProcessStatus(*myShellPL, pid, TERMINATED);
+            if (pCmdLine->blocking) {
+                waitpid(pid, &status, 0);
+                updateProcessStatus(*myShellPL, pid, TERMINATED);
+            }
         }
     }
 }
